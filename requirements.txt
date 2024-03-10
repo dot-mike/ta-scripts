@@ -6,3 +6,7 @@ python-dateutil==2.8.2
 python-dotenv==1.0.1
 six==1.16.0
 urllib3==2.2.1
+yt_dlp>=2023.12.30
+ffmpeg_progress_yield==0.7.8
+pillow==10.2.0
+tqdm==4.66.2
