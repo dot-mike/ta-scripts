@@ -1,6 +1,10 @@
 # TA Scripts
 
-This is a collection of scripts that I use to make my life with TubeArchivist easier. I hope you find them useful.
+This is a collection of scripts that I use to make my life with [TubeArchivist](https://github.com/tubearchivist/tubearchivist) easier. I hope you find them useful.
+
+Any issues should be reported to the issue tracker on this repository.
+
+Note that these scripts are not officially supported by TubeArchivist, and are not part of the TubeArchivist project. They are provided as-is, with no warranty or guarantee of any kind. They may break at any time, and may not work as expected. Use at your own risk.
 
 ## Installation
 
