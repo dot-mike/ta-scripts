@@ -1,0 +1,8 @@
+certifi==2024.2.2
+colorama==0.4.6
+elastic-transport==8.12.0
+elasticsearch==8.12.1
+python-dateutil==2.8.2
+python-dotenv==1.0.1
+six==1.16.0
+urllib3==2.2.1

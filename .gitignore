@@ -1,0 +1,5 @@
+.vscode
+.env*
+!.env.sample
+.venv
+*.json
