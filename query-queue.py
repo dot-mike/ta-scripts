@@ -9,6 +9,7 @@ import os
 import sys
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch, helpers
+from urllib.parse import urlparse, parse_qs
 
 load_dotenv()
 
@@ -42,6 +43,15 @@ def main():
         video_id = input("Enter video id: ")
     else:
         video_id = sys.argv[1]
+
+    if "youtube.com" in video_id or "youtu.be" in video_id:
+        url_data = urlparse(video_id)
+        query = parse_qs(url_data.query)
+        if url_data.netloc == "youtu.be":
+            video_id = url_data.path[1:]
+        else:
+            if "v" in query:
+                video_id = query["v"][0]
 
     if video_id in queued_videos:
         print(f"Video {video_id} is in the download queue")
