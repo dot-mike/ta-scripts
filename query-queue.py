@@ -7,9 +7,12 @@ Usage:
 
 import os
 import sys
-from dotenv import load_dotenv
-from elasticsearch import Elasticsearch, helpers
+import pickle
+import time
 from urllib.parse import urlparse, parse_qs
+from elasticsearch import Elasticsearch, helpers
+from dotenv import load_dotenv
+
 
 load_dotenv()
 
@@ -19,7 +22,7 @@ es = Elasticsearch(
 
 
 def main():
-    print("Fetching video ids from download queue")
+    print("Starting script")
     download_index = "ta_download"
 
     ignored = False
@@ -37,16 +40,31 @@ def main():
             {"timestamp": {"order": "asc"}},
         ],
     }
-    iterator = helpers.scan(
-        es,
-        index=download_index,
-        query=query,
-        scroll="5m",
-        preserve_order=True,
-    )
+
+    cache_file = "queued_videos.pkl"
     queued_videos = []
-    for video in iterator:
-        queued_videos.extend([video["_source"]["youtube_id"]])
+
+    if os.path.exists(cache_file):
+        cache_time = os.path.getmtime(cache_file)
+        if (time.time() - cache_time) / 60 < 30:
+            print("Fetching video ids from cache")
+            with open(cache_file, "rb") as f:
+                queued_videos = pickle.load(f)
+
+    if not queued_videos:
+        print("Fetching video ids in download queue from Elasticsearch")
+        iterator = helpers.scan(
+            es,
+            index=download_index,
+            query=query,
+            scroll="5m",
+            preserve_order=True,
+        )
+        for video in iterator:
+            queued_videos.extend([video["_source"]["youtube_id"]])
+
+        with open(cache_file, "wb") as f:
+            pickle.dump(queued_videos, f)
 
     print(f"Found {len(queued_videos)} video ids in download queue")
 
