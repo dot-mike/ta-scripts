@@ -1,12 +1,14 @@
 """
-This script will check if any of the videos in the input fil
-is already present in the TA video index, if not it will print the id to the console.
+This script will check if the specified video id/url or
+a file containing list of video ids/urls are already present in TubeArchivist.
+If the video is not present, it will print the video id.
+If the video is present, it will not print anything
 
-Useful for checking if the videos should be downloaded or not.
+Useful for checking for duplicate videos before adding them to the queue.
 
 Usage:
-    python dupe-check.py <input_file>
-    <input_file> - File containing list of youtube video URLs or video IDs
+    python {filename} COMMAND ARG1
+    ARG1: Video ID/url or file containing video IDs
 """
 
 import os
@@ -45,45 +47,47 @@ def fetch_existing_ids(es, index, video_ids):
     query = {
         "query": {"terms": {"youtube_id": video_ids}}  # List of your local video IDs
     }
-    existing_ids = set()
+    print("Fetching existing video IDs from TA...")
+    existing_ids = list()
     data = helpers.scan(es, index=index, query=query, _source_includes=["youtube_id"])
     for hit in data:
-        existing_ids.add(hit["_source"]["youtube_id"])
+        existing_ids.append(hit["_source"]["youtube_id"])
     return existing_ids
 
 
-def main():
-    filename = os.path.basename(__file__)
-    if len(sys.argv) < 2:
-        print(f"Usage: python {filename} <input_file>")
-        return
+def main(input_data):
+    """Main function"""
 
-    input_file = sys.argv[1]
+    if os.path.exists(input_data):
+        with open(input_data, "r", encoding="utf-8") as f:
+            video_ids = f.readlines()
+            video_ids = [extract_video_id(video_id) for video_id in video_ids]
+    else:
+        video_ids = [extract_video_id(input_data)]
 
-    if not os.path.exists(input_file):
-        print(f"Input file {input_file} does not exist")
-        return
+    existing_ids_in_index = fetch_existing_ids(es, "ta_video", video_ids)
 
-    with open(input_file, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+    print("Checking if the videos are already present in TA...")
 
-    local_video_ids = []
-
-    for line in lines:
-        video_id = extract_video_id(line)
-        if video_id:
-            local_video_ids.append(video_id)
-
-    existing_ids_in_index = fetch_existing_ids(es, "ta_video", local_video_ids)
-
-    count = 0
-    for video in local_video_ids:
+    for video in video_ids:
         if not video in existing_ids_in_index:
-            count += 1
             print(f"Video {video} is not present in TA")
 
     print("Script completed successfully!")
 
 
 if __name__ == "__main__":
-    main()
+    filename = os.path.basename(__file__)
+    docstring = __doc__.format(filename=filename)
+
+    if len(sys.argv) < 1:
+        print(docstring)
+        sys.exit(0)
+
+    if sys.argv[1] == "-h":
+        print(docstring)
+        sys.exit(0)
+
+    user_input = sys.argv[1]
+
+    main(user_input)
