@@ -149,6 +149,12 @@ def priority(input_data):
     is_flag=True,
     help="Only print the video IDs that are not found",
 )
+@click.option(
+    "--channel",
+    "-c",
+    is_flag=True,
+    help="If you are querying a channel, the video IDs will be extracted from the channel URL.",
+)
 @optgroup.group(
     "Query option",
     cls=RequiredMutuallyExclusiveOptionGroup,
@@ -163,10 +169,29 @@ def priority(input_data):
 @optgroup.option(
     "--index", "-i", is_flag=True, help="Query the video status in the index."
 )
-def query(input_data, only_missing, download_queue, index):
-    video_ids = process_input_data(input_data)
-    if not video_ids:
-        return
+def query(input_data, only_missing, channel, download_queue, index):
+    if channel:
+        if len(input_data) != 1:
+            print("Please provide a channel URL")
+            return
+        channel_url = input_data[0]
+        r = session.get(f"{API_URL}/channel/{channel_url}/")
+        if r.status_code != 200:
+            print("Channel not found")
+            return
+
+        r = session.get(f"{API_URL}/download/?channel={channel_url}&filter=pending")
+        if r.status_code != 200:
+            print("Failed to query the download queue")
+            return
+
+        # {'data': [{'auto_start': False, 'channel_id': 'UC4NbmfkCUDetcXBWWlA4ZxA', 'channel_indexed': False, 'channel_name': '2pluss Info', 'duration': '20s', 'published': '2015-06-16', 'status': 'pending', 'timestamp': 1700093725, 'title': 'Hos psykologen', 'vid_thumb_url': '/cache/videos/l/Lsxjn-xdA0M.jpg', 'vid_type': 'videos', 'youtube_id': 'Lsxjn-xdA0M', '_index': 'ta_download', '_score': 0}]
+        video_ids = [video["youtube_id"] for video in r.json()["data"]]
+    else:
+
+        video_ids = process_input_data(input_data)
+        if not video_ids:
+            return
 
     if download_queue:
         url = f"{API_URL}/download"
@@ -204,6 +229,4 @@ def query(input_data, only_missing, download_queue, index):
 
 
 if __name__ == "__main__":
-    filename = os.path.basename(__file__)
-    docstring = __doc__.format(filename=filename)
     cli()
