@@ -8,12 +8,21 @@ import re
 import time
 import requests
 import click
-from click_option_group import optgroup, RequiredMutuallyExclusiveOptionGroup
+import dateparser
+from click_option_group import (
+    optgroup,
+    RequiredMutuallyExclusiveOptionGroup,
+)
 from urllib.parse import urlparse, parse_qs
+from elasticsearch import Elasticsearch, helpers
 from dotenv import load_dotenv
 
 
 load_dotenv()
+
+es = Elasticsearch(
+    [os.getenv("ES_HOST")], basic_auth=(os.getenv("ES_USER"), os.getenv("ES_PASSWORD"))
+)
 
 script_dir = os.path.dirname(__file__)
 
@@ -155,6 +164,12 @@ def priority(input_data):
     is_flag=True,
     help="If you are querying a channel, the video IDs will be extracted from the channel URL.",
 )
+@click.option(
+    "--date",
+    is_flag=True,
+    help="Query for videos published on a specific date.",
+)
+@click.option("--json", is_flag=True, help="Get data in JSON format")
 @optgroup.group(
     "Query option",
     cls=RequiredMutuallyExclusiveOptionGroup,
@@ -169,7 +184,15 @@ def priority(input_data):
 @optgroup.option(
     "--index", "-i", is_flag=True, help="Query the video status in the index."
 )
-def query(input_data, only_missing, channel, download_queue, index):
+def query(
+    input_data,
+    only_missing,
+    channel,
+    date,
+    json,
+    download_queue,
+    index,
+):
     if channel:
         if len(input_data) != 1:
             print("Please provide a channel URL")
@@ -187,8 +210,89 @@ def query(input_data, only_missing, channel, download_queue, index):
 
         # {'data': [{'auto_start': False, 'channel_id': 'UC4NbmfkCUDetcXBWWlA4ZxA', 'channel_indexed': False, 'channel_name': '2pluss Info', 'duration': '20s', 'published': '2015-06-16', 'status': 'pending', 'timestamp': 1700093725, 'title': 'Hos psykologen', 'vid_thumb_url': '/cache/videos/l/Lsxjn-xdA0M.jpg', 'vid_type': 'videos', 'youtube_id': 'Lsxjn-xdA0M', '_index': 'ta_download', '_score': 0}]
         video_ids = [video["youtube_id"] for video in r.json()["data"]]
-    else:
+    elif date:
+        if not input_data:
+            print("Please provide a date or a range of dates separated by a comma")
+            return
+        dates = input_data[0].split(",")
 
+        start_date = dateparser.parse(
+            dates[0],
+            languages=["en"],
+            settings={
+                "PARSERS": [
+                    "no-spaces-time",
+                    "timestamp",
+                    "relative-time",
+                    "custom-formats",
+                    "absolute-time",
+                ]
+            },
+        )
+        print(dates)
+        if len(dates) == 1:
+            dates.append(dates[0])
+
+        end_date = dateparser.parse(
+            dates[1],
+            languages=["en"],
+            settings={
+                "PARSERS": [
+                    "no-spaces-time",
+                    "timestamp",
+                    "relative-time",
+                    "custom-formats",
+                    "absolute-time",
+                ]
+            },
+        )
+        if not start_date or not end_date:
+            print("Failed to parse date(s)")
+            return
+
+        # swap dates if start_date is greater than end_date
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+        print(
+            f"Querying for videos published between {start_date.date()} and {end_date.date()}"
+        )
+        # modify the es_query to include a range of dates
+        es_query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {
+                            "range": {
+                                "published": {
+                                    "gte": start_date.strftime("%Y-%m-%d"),
+                                    "lte": end_date.strftime("%Y-%m-%d"),
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            "sort": [{"timestamp": {"order": "asc"}}],
+        }
+
+        es_result = es.search(
+            index="ta_download",
+            body=es_query,
+            scroll="5m",
+            size="10000",
+        )
+        results = []
+        for hit in es_result["hits"]["hits"]:
+            results.append(hit["_source"])
+        if json:
+            print(results)
+        else:
+            video_ids = [video["youtube_id"] for video in results]
+            print("\n".join(video_ids))
+        return
+
+    else:
         video_ids = process_input_data(input_data)
         if not video_ids:
             return
@@ -208,25 +312,42 @@ def query(input_data, only_missing, channel, download_queue, index):
     for video_id in video_ids:
         r = session.get(f"{url}/{video_id}/")
         if r.status_code == 404:
-            missing_videos.append(video_id)
+            missing_videos.append(r.json().get("data"))
             continue
         if r.status_code != 200:
-            failed_videos.append(video_id)
+            failed_videos.append(r.json().get("data"))
             continue
         else:
-            found_videos.append(video_id)
+            found_videos.append(r.json().get("data"))
 
     if only_missing:
         print("Missing videos:")
-        print("\n".join(missing_videos))
+        for video in missing_videos:
+            if json:
+                print(video)
+            else:
+                print(video["youtube_id"])
     else:
         print(f"Found videos in the {query_type}:")
-        print("\n".join(found_videos))
+        for video in found_videos:
+            if json:
+                print(video)
+            else:
+                print(video["youtube_id"])
         print(f"Missing videos in the {query_type}:")
-        print("\n".join(missing_videos))
+        for video in missing_videos:
+            if json:
+                print(video)
+            else:
+                print(video["youtube_id"])
         print(f"Failed videos in the {query_type}:")
-        print("\n".join(failed_videos))
+        for video in failed_videos:
+            if json:
+                print(video)
+            else:
+                print(video["youtube_id"])
 
 
 if __name__ == "__main__":
+
     cli()
