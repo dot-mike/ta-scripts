@@ -362,6 +362,23 @@ def query(
                 print(video["youtube_id"])
 
 
+@cli.command()
+@click.argument("input_data", nargs=-1, type=str)
+def remove(input_data):
+    video_ids = process_input_data(input_data)
+    if not video_ids:
+        return
+
+    # remove videos from the download queue
+    for video_id in video_ids:
+        r = session.delete(f"{API_URL}/download/{video_id}/")
+        if r.status_code == 200:
+            print(f"Removed video {video_id} from the download queue")
+        else:
+            print(f"Failed to remove video {video_id} from the download queue")
+        print(r)
+
+
 if __name__ == "__main__":
 
     cli()
