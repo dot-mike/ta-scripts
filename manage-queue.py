@@ -203,13 +203,27 @@ def query(
             print("Channel not found")
             return
 
-        r = session.get(f"{API_URL}/download/?channel={channel_url}&filter=pending")
+        r = session.get(
+            f"{API_URL}/download/?channel={channel_url}&filter=pending&page=2"
+        )
         if r.status_code != 200:
             print("Failed to query the download queue")
             return
 
-        # {'data': [{'auto_start': False, 'channel_id': 'UC4NbmfkCUDetcXBWWlA4ZxA', 'channel_indexed': False, 'channel_name': '2pluss Info', 'duration': '20s', 'published': '2015-06-16', 'status': 'pending', 'timestamp': 1700093725, 'title': 'Hos psykologen', 'vid_thumb_url': '/cache/videos/l/Lsxjn-xdA0M.jpg', 'vid_type': 'videos', 'youtube_id': 'Lsxjn-xdA0M', '_index': 'ta_download', '_score': 0}]
         video_ids = [video["youtube_id"] for video in r.json()["data"]]
+        print(f"total hits: {r.json()['paginate']['total_hits']}")
+
+        # pagination
+        while r.json()["paginate"]["current_page"] <= r.json()["paginate"]["last_page"]:
+            page = r.json()["paginate"]["current_page"] + 1
+            r = session.get(
+                f"{API_URL}/download/?channel={channel_url}&filter=pending&page={page}"
+            )
+            if r.status_code != 200:
+                print("Failed to query the download queue")
+                return
+            video_ids.extend([video["youtube_id"] for video in r.json()["data"]])
+
     elif date:
         if not input_data:
             print("Please provide a date or a range of dates separated by a comma")
