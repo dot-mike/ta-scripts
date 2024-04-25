@@ -165,9 +165,14 @@ def priority(input_data):
     help="If you are querying a channel, the video IDs will be extracted from the channel URL.",
 )
 @click.option(
-    "--date",
+    "--publish-date",
     is_flag=True,
-    help="Query for videos published on a specific date.",
+    help="Find videos in download/index published on a specific date (use comma separated dates for a range)",
+)
+@click.option(
+    "--index-date",
+    is_flag=True,
+    help="Find videos added to download/index on a specific date (use comma separated dates for a range)",
 )
 @click.option("--json", is_flag=True, help="Get data in JSON format")
 @optgroup.group(
@@ -188,11 +193,17 @@ def query(
     input_data,
     only_missing,
     channel,
-    date,
+    publish_date,
+    index_date,
     json,
     download_queue,
     index,
 ):
+    """
+    Find videos in the queue published on specific date
+    or find videos based on channel id
+    or find videos download / index
+    """
     if channel:
         if len(input_data) != 1:
             print("Please provide a channel URL")
@@ -224,9 +235,11 @@ def query(
                 return
             video_ids.extend([video["youtube_id"] for video in r.json()["data"]])
 
-    elif date:
+    elif publish_date or index_date:
         if not input_data:
-            print("Please provide a date or a range of dates separated by a comma")
+            print(
+                "Please provide a date or a range of dates separated by a comma. Example: today,today-1day"
+            )
             return
         dates = input_data[0].split(",")
 
@@ -243,7 +256,6 @@ def query(
                 ]
             },
         )
-        print(dates)
         if len(dates) == 1:
             dates.append(dates[0])
 
@@ -268,32 +280,59 @@ def query(
         if start_date > end_date:
             start_date, end_date = end_date, start_date
 
-        print(
-            f"Querying for videos published between {start_date.date()} and {end_date.date()}"
-        )
-        # modify the es_query to include a range of dates
-        es_query = {
-            "query": {
-                "bool": {
-                    "must": [
-                        {
-                            "range": {
-                                "published": {
-                                    "gte": start_date.strftime("%Y-%m-%d"),
-                                    "lte": end_date.strftime("%Y-%m-%d"),
+        query_type = ""
+        if index_date:
+            # for videos added to the download/index on a specific date or a range of dates
+            query_type = "index_date"
+
+            es_query = {
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "range": {
+                                    "timestamp": {
+                                        "gte": str(int(start_date.timestamp())),
+                                        "lte": str(int(end_date.timestamp())),
+                                    }
                                 }
                             }
-                        }
-                    ]
-                }
-            },
-            "sort": [{"timestamp": {"order": "asc"}}],
-        }
+                        ]
+                    }
+                },
+                "sort": [{"timestamp": {"order": "asc"}}],
+            }
+
+        if publish_date:
+            # for videos in the download/index published on a specific date or a range of dates
+            query_type = "published_date"
+            es_query = {
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "range": {
+                                    "published": {
+                                        "gte": start_date.strftime("%Y-%m-%d"),
+                                        "lte": end_date.strftime("%Y-%m-%d"),
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                "sort": [{"timestamp": {"order": "asc"}}],
+            }
+
+        print(
+            f"Querying for videos using {query_type} between {start_date.strftime('%Y-%m-%d')} and {end_date.strftime('%Y-%m-%d')}"
+        )
+
+        print(es_query)
 
         es_result = es.search(
             index="ta_download",
             body=es_query,
-            scroll="5m",
             size="10000",
         )
         results = []
@@ -340,26 +379,26 @@ def query(
             if json:
                 print(video)
             else:
-                print(video["youtube_id"])
+                print(video)
     else:
         print(f"Found videos in the {query_type}:")
         for video in found_videos:
             if json:
                 print(video)
             else:
-                print(video["youtube_id"])
+                print(video)
         print(f"Missing videos in the {query_type}:")
         for video in missing_videos:
             if json:
                 print(video)
             else:
-                print(video["youtube_id"])
+                print(video)
         print(f"Failed videos in the {query_type}:")
         for video in failed_videos:
             if json:
                 print(video)
             else:
-                print(video["youtube_id"])
+                print(video)
 
 
 @cli.command()
@@ -377,6 +416,90 @@ def remove(input_data):
         else:
             print(f"Failed to remove video {video_id} from the download queue")
         print(r)
+
+
+@cli.command()
+@click.argument("search_query", nargs=1, type=str)
+def search(search_query):
+    """
+    Search for videos in the download queue or the index.
+    """
+    es_query = {
+        "query": {
+            "query_string": {
+                "query": search_query,
+                "fields": ["title", "description", "youtube_id"],
+            }
+        },
+        "sort": [{"timestamp": {"order": "asc"}}],
+        "size": "10000",
+    }
+
+    es_result = es.search(
+        index="ta_download",
+        body=es_query,
+        scroll="5m",
+    )
+
+    results = []
+    for hit in es_result["hits"]["hits"]:
+        results.append(hit["_source"])
+
+    print(results)
+
+    # pretty print
+    for video in results:
+        print(f"Title: {video['title']}")
+        print(f"Channel: {video['channel_name']}")
+        print(f"Published: {video['published']}")
+        print(f"Duration: {video['duration']}")
+        print(f"Status: {video['status']}")
+        print(f"Youtube ID: {video['youtube_id']}")
+        print("\n")
+
+
+@cli.command()
+def requeue_blocked_errors():
+    """
+    Requeue videos that have failed to download.
+    """
+    es_query = {
+        "query": {
+            "bool": {
+                "must": [
+                    {"match": {"message": "ERROR"}},
+                    {"match": {"message": "blocked"}},
+                    {"term": {"status": "pending"}},
+                ]
+            },
+        },
+        "sort": [{"timestamp": {"order": "asc"}}],
+        "size": "10000",
+    }
+
+    es_result = es.search(
+        index="ta_download",
+        body=es_query,
+        scroll="5m",
+    )
+
+    results = []
+    for hit in es_result["hits"]["hits"]:
+        results.append(hit["_source"])
+
+    video_ids = [video["youtube_id"] for video in results]
+
+    print(f"Requeuing {len(video_ids)} videos")
+
+    # post the video IDs to the download queue
+    for video_id in video_ids:
+        r = session.post(f"{API_URL}/download/{video_id}/", json={"status": "priority"})
+        if r.status_code == 200:
+            print(f"Requeued video {video_id}")
+        else:
+            print(f"Failed to requeue video {video_id}")
+
+        time.sleep(2)
 
 
 if __name__ == "__main__":
