@@ -22,9 +22,10 @@ es = Elasticsearch(
 )
 
 def fetch_index_data(index_name, query):
-    """Fetch all documents from an index using a scroll to handle large result sets."""
+    """Fetch all documents from an index using a scroll to handle large result sets with scroll cleanup."""
     data = []
     try:
+        # Initialize scroll
         response = es.search(index=index_name, body=query, scroll="2m", size=1000)
         scroll_id = response["_scroll_id"]
         hits = response["hits"]["hits"]
@@ -34,10 +35,16 @@ def fetch_index_data(index_name, query):
             response = es.scroll(scroll_id=scroll_id, scroll="2m")
             hits = response["hits"]["hits"]
             data.extend(hits)
-            
+
+        # Clear the scroll context
+        es.clear_scroll(scroll_id=scroll_id)
+    
     except Exception as e:
         print(f"Error fetching data from {index_name}: {e}")
-    
+        # Clear scroll if an error occurs
+        if 'scroll_id' in locals():
+            es.clear_scroll(scroll_id=scroll_id)
+
     return [hit["_source"] for hit in data]
 
 def export_ta_format(channel_id, zipf):
