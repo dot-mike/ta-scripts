@@ -32,7 +32,8 @@ ERROR_MESSAGE_FILTERS = {
     "video_unavailable": "Video unavailable",
     "account_terminated": "This video is no longer available because the YouTube account associated with this video has been terminated.",
     "private_video": "Private video. Sign in if you've been granted access to this video",
-    "copyright_claim": "Video unavailable. This video is no longer available due to a copyright claim by Fiqih Hendra"
+    "copyright_claim": "Video unavailable. This video is no longer available due to a copyright claim by Fiqih Hendra",
+    "bot_protection": "Sign in to confirm you’re not a bot"
 }
 
 def setup_logging(verbosity):
@@ -71,8 +72,9 @@ def query_videos(
     if no_errors:
         must_query.append({"bool": {"must_not": {"exists": {"field": "message"}}}})
 
-    if message_filters:
-        should_query = [{"match_phrase": {"message": message}} for message in message_filters]
+    for filter_name in message_filters:
+        if filter_name in ERROR_MESSAGE_FILTERS:
+            should_query.append({"match_phrase": {"message": {"query": ERROR_MESSAGE_FILTERS[filter_name]}}})
 
     if video_type:
         must_query.append({"term": {"vid_type": {"value": video_type}}})
@@ -85,6 +87,9 @@ def query_videos(
             date_range["range"]["timestamp"]["lte"] = queue_before_epoch
         date_range["range"]["timestamp"]["format"] = "epoch_second"
         must_query.append(date_range)
+
+    if verbosity >= 3:
+        logging.debug("Elasticsearch Query: %s", json.dumps(body, indent=2))
 
     body = {
         "query": {
