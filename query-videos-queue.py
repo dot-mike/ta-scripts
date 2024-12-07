@@ -1,11 +1,13 @@
 import os
 import sys
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, helpers
 import json
 import click
 import logging
 from datetime import datetime
+from collections import Counter
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
 
@@ -36,108 +38,158 @@ ERROR_MESSAGE_FILTERS = {
 def setup_logging(verbosity):
     """Setup logging configuration based on verbosity level."""
     levels = [logging.WARNING, logging.INFO, logging.DEBUG]
-    level = levels[min(len(levels) - 1, verbosity)]  # Clamp to available levels
+    level = levels[min(len(levels) - 1, verbosity)]
     logging.basicConfig(level=level, format="%(asctime)s - %(levelname)s - %(message)s")
+
+def convert_to_epoch(date_str):
+    """Convert YYYY-MM-DD date to epoch_second."""
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return str(int(dt.timestamp()))
+    except ValueError:
+        raise ValueError(f"Invalid date format: {date_str}. Expected format is YYYY-MM-DD.")
 
 def query_videos(
     status_filter=None, title_contains=None, no_errors=False, message_filters=None,
     queue_after=None, queue_before=None, published_after=None, published_before=None,
-    start_page=0, max_pages=None, max_results=None, page_size=12, verbosity=0
+    video_type="videos", max_results=10000, verbosity=0
 ):
     results = []
-    current_page = start_page
-    total_results = 0
 
     queue_after_epoch = convert_to_epoch(queue_after) if queue_after else None
     queue_before_epoch = convert_to_epoch(queue_before) if queue_before else None
 
-    while True:
-        if max_pages is not None and current_page >= max_pages:
-            logging.info("Reached max pages limit: %d", max_pages)
-            break
-        if max_results is not None and total_results >= max_results:
-            logging.info("Reached max results limit: %d", max_results)
-            break
+    must_query = []
+    should_query = []
 
-        from_offset = current_page * page_size
-        must_query = []
-        should_query = []
+    if status_filter:
+        must_query.append({"term": {"status": {"value": status_filter}}})
 
-        if status_filter:
-            must_query.append({"term": {"status": {"value": status_filter}}})
+    if title_contains:
+        must_query.append({"match": {"title": title_contains}})
 
-        if title_contains:
-            must_query.append({"match": {"title": title_contains}})
+    if no_errors:
+        must_query.append({"bool": {"must_not": {"exists": {"field": "message"}}}})
 
-        if no_errors:
-            must_query.append({"bool": {"must_not": {"exists": {"field": "message"}}}})
+    if message_filters:
+        should_query = [{"match_phrase": {"message": message}} for message in message_filters]
 
-        if message_filters:
-            should_query = [{"match_phrase": {"message": message}} for message in message_filters]
+    if video_type:
+        must_query.append({"term": {"vid_type": {"value": video_type}}})
 
-        if queue_after_epoch or queue_before_epoch:
-            date_range = {"range": {"timestamp": {}}}
-            if queue_after_epoch:
-                date_range["range"]["timestamp"]["gte"] = queue_after_epoch
-            if queue_before_epoch:
-                date_range["range"]["timestamp"]["lte"] = queue_before_epoch
-            date_range["range"]["timestamp"]["format"] = "epoch_second"
-            must_query.append(date_range)
+    if queue_after_epoch or queue_before_epoch:
+        date_range = {"range": {"timestamp": {}}}
+        if queue_after_epoch:
+            date_range["range"]["timestamp"]["gte"] = queue_after_epoch
+        if queue_before_epoch:
+            date_range["range"]["timestamp"]["lte"] = queue_before_epoch
+        date_range["range"]["timestamp"]["format"] = "epoch_second"
+        must_query.append(date_range)
 
-        if published_after or published_before:
-            date_range = {"range": {"published": {}}}
-            if published_after:
-                date_range["range"]["published"]["gte"] = published_after
-            if published_before:
-                date_range["range"]["published"]["lte"] = published_before
-            must_query.append(date_range)
+    body = {
+        "query": {
+            "bool": {
+                "must": must_query,
+                "should": should_query,
+                "minimum_should_match": 1 if should_query else 0
+            }
+        },
+        "sort": [
+            {"auto_start": {"order": "desc"}},
+            {"timestamp": {"order": "asc"}}
+        ],
+        "size": 1000
+    }
 
-        body = {
-            "query": {
-                "bool": {
-                    "must": must_query,
-                    "should": should_query,
-                    "minimum_should_match": 1 if should_query else 0
-                }
-            },
-            "sort": [
-                {"auto_start": {"order": "desc"}},
-                {"timestamp": {"order": "asc"}}
-            ],
-            "size": page_size,
-            "from": from_offset
-        }
+    scroll_timeout = "2m"
+    response = es.search(index="ta_download", body=body, scroll=scroll_timeout)
 
-        if verbosity >= 3:
-            logging.debug("Elasticsearch Query: %s", json.dumps(body, indent=2))
+    scroll_id = response["_scroll_id"]
+    hits = response["hits"]["hits"]
+    results.extend(hit["_source"] for hit in hits)
 
-        response = es.search(index="ta_download", body=body)
-        hits = response.get("hits", {}).get("hits", [])
-        results.extend([hit["_source"] for hit in hits])
+    while hits and len(results) < max_results:
+        response = es.scroll(scroll_id=scroll_id, scroll=scroll_timeout)
+        hits = response["hits"]["hits"]
+        results.extend(hit["_source"] for hit in hits)
 
-        total_results += len(hits)
-        if len(hits) < page_size:
-            break
+    return results[:max_results]
 
-        current_page += 1
 
-    return results[:max_results] if max_results else results
+def parse_duration(duration_str):
+    """Convert a duration string like '15m 32s' into seconds."""
+    if not duration_str:
+        return 0
+    match = re.match(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?", duration_str.strip())
+    if not match:
+        return 0
+    hours, minutes, seconds = match.groups()
+    total_seconds = (int(hours) * 3600 if hours else 0) + \
+                    (int(minutes) * 60 if minutes else 0) + \
+                    (int(seconds) if seconds else 0)
+    return total_seconds
+
+
+def calculate_stats(videos):
+    """Calculate and display statistics about the results."""
+    total_videos = len(videos)
+    statuses = Counter(video["status"] for video in videos)
+    channels = Counter(video.get("channel_name", "Unknown") for video in videos)
+    publication_years = Counter(video["published"][:4] for video in videos if "published" in video)
+    error_free = sum(1 for video in videos if "message" not in video)
+    with_errors = total_videos - error_free
+    with_thumbnails = sum(1 for video in videos if "vid_thumb_url" in video)
+    without_thumbnails = total_videos - with_thumbnails
+
+    length_categories = {"short": 0, "medium": 0, "long": 0}
+    for video in videos:
+        if "duration" in video:
+            duration = parse_duration(video["duration"])
+            if duration < 300:
+                length_categories["short"] += 1
+            elif 300 <= duration <= 1800:
+                length_categories["medium"] += 1
+            else:
+                length_categories["long"] += 1
+
+    common_errors = Counter()
+    for video in videos:
+        message = video.get("message")
+        if message:
+            for error_key, error_pattern in ERROR_MESSAGE_FILTERS.items():
+                if error_pattern in message:
+                    common_errors[error_key] += 1
+
+    stats = {
+        "total_videos": total_videos,
+        "statuses": dict(statuses),
+        "channels": dict(channels.most_common(5)),
+        "publication_trends": {
+            "by_year": dict(publication_years)
+        },
+        "error_stats": {"error_free": error_free, "with_errors": with_errors},
+        "common_errors": dict(common_errors),
+        "thumbnail_stats": {"with_thumbnails": with_thumbnails, "without_thumbnails": without_thumbnails},
+        "video_length_distribution": length_categories
+    }
+    return stats
+
 
 @click.command()
 @click.option("--filter", type=str, default=None, help="Filter by status (pending or ignore).")
+@click.option("--message-filter", "-mf", type=click.Choice(ERROR_MESSAGE_FILTERS.keys()), multiple=True, help="Filter videos by specific error messages.")
+@click.option("--video-type", type=click.Choice(["shorts", "videos"]), default="videos", help="Filter videos by type (default: videos).")
 @click.option("--title-contains", type=str, help="Filter videos whose title contains a specific keyword.")
 @click.option("--no-errors", is_flag=True, help="Find videos without errors (where 'message' field is null).")
 @click.option("--queue-after", type=str, default=None, help="Filter videos added to the queue after this date (YYYY-MM-DD).")
 @click.option("--queue-before", type=str, default=None, help="Filter videos added to the queue before this date (YYYY-MM-DD).")
 @click.option("--published-after", type=str, default=None, help="Filter videos published after this date (YYYY-MM-DD).")
 @click.option("--published-before", type=str, default=None, help="Filter videos published before this date (YYYY-MM-DD).")
-@click.option("--start-page", type=int, default=0, help="Start page for query, default is 0.")
-@click.option("--max-pages", type=int, help="Maximum number of pages to fetch.")
-@click.option("--max-results", type=int, help="Maximum number of results to fetch.")
-@click.option("--page-size", type=int, default=12, help="Number of items per page.")
+@click.option("--max-results", type=int, default=10000, help="Maximum number of results to fetch (default 10,000).")
 @click.option("--output", "-o", type=str, default=None, help="Save output to a file (JSON format).")
+@click.option("--stats", is_flag=True, help="Display summary statistics instead of full output.")
 @click.option("-v", "--verbose", count=True, help="Increase output verbosity. Use -vvv for max verbosity.")
-def main(filter, title_contains, no_errors, queue_after, queue_before, published_after, published_before, start_page, max_pages, max_results, page_size, output, verbose):
+def main(filter, message_filter, video_type, title_contains, no_errors, queue_after, queue_before, published_after, published_before, max_results, output, stats, verbose):
     """
     Query the Elasticsearch video queue with optional filters and pagination.
     """
@@ -147,20 +199,22 @@ def main(filter, title_contains, no_errors, queue_after, queue_before, published
 
     videos = query_videos(
         status_filter=filter,
+        message_filters=message_filter,
+        video_type=video_type,
         title_contains=title_contains,
         no_errors=no_errors,
         queue_after=queue_after,
         queue_before=queue_before,
         published_after=published_after,
         published_before=published_before,
-        start_page=start_page,
-        max_pages=max_pages,
         max_results=max_results,
-        page_size=page_size,
         verbosity=verbose
     )
 
-    if output:
+    if stats:
+        statistics = calculate_stats(videos)
+        print(json.dumps(statistics, indent=2))
+    elif output:
         with open(output, "w") as f:
             json.dump(videos, f, indent=2)
         logging.info("Results saved to %s", output)
