@@ -1,3 +1,8 @@
+""" This script is used to query for videos in the download queue.
+The reason for this is to find one or more videos and re-schedule them into the queue by extracting the video ID's and
+add all the ID's to the queue again using priority to they downloaded first
+"""
+
 import os
 import sys
 from elasticsearch import Elasticsearch, helpers
