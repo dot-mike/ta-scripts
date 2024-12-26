@@ -1,5 +1,5 @@
 """
-This script will show all pending videos for given channel_i
+This script will show all pending videos for given channel_id
 """
 
 import os
