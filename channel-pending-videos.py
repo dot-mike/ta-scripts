@@ -1,3 +1,7 @@
+"""
+This script will show all pending videos for given channel_i
+"""
+
 import os
 import sys
 import requests
