@@ -1,5 +1,10 @@
 """
 This script will let you manage the download queue of TubeArchivist.
+
+EDIT 2024-12-27:
+This is a legacy script. Not recommeneded to use!
+See script `query-ta-videos.py` to query archive
+See script `query-videos-queue.py` to query the download queue.
 """
 
 import os
