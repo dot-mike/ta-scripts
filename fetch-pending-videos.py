@@ -1,3 +1,7 @@
+"""
+Command-line tool to fetch all pending videos up to a specified page.
+"""
+
 import os
 import sys
 import requests
@@ -45,9 +49,6 @@ def fetch_pending_videos(max_page):
 @click.command()
 @click.argument("max_page", type=int)
 def fetch_videos(max_page):
-    """
-    Command-line tool to fetch all pending videos up to a specified page.
-    """
     videos = fetch_pending_videos(max_page)
     print(json.dumps(videos, indent=2))
 
