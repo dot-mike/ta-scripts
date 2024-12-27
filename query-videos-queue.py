@@ -1,6 +1,10 @@
 """ This script is used to query for videos in the download queue.
 The reason for this is to find one or more videos and re-schedule them into the queue by extracting the video ID's and
 add all the ID's to the queue again using priority to they downloaded first
+
+Example usage:
+# find all videos in download queue with error 'Sign in to confirm you’re not a bot', grab the videos ID's and save them to the file youtube-ids.json
+- python query-video-queue.py --filter pending -mf bot_protection -o result.json | jq -r '.[].youtube_id' result.json > youtube-ids.json
 """
 
 import os
