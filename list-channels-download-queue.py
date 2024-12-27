@@ -1,3 +1,8 @@
+"""
+Fetch and display all channels in the download queue along with the total count of videos.
+Optionally include video IDs with the --videos flag.
+"""
+
 import os
 import sys
 import json
@@ -20,10 +25,6 @@ es = Elasticsearch([ES_HOST], basic_auth=(ES_USER, ES_PASSWORD))
 @click.command()
 @click.option('--videos', is_flag=True, help="Include a list of video IDs for each channel.")
 def list_channels_download_queue(videos):
-    """
-    Fetch and display all channels in the download queue along with the total count of videos.
-    Optionally include video IDs with the --videos flag.
-    """
     index_name = "ta_download"
     query = {
         "query": {
