@@ -5,6 +5,8 @@ add all the ID's to the queue again using priority to they downloaded first
 Example usage:
 # find all videos in download queue with error 'Sign in to confirm you’re not a bot', grab the videos ID's and save them to the file youtube-ids.json
 - python query-video-queue.py --filter pending -mf bot_protection -o result.json | jq -r '.[].youtube_id' result.json > youtube-ids.json
+# Get some stats about the videos in the queue (max 10000)
+- python query-video-queue.py --stats
 """
 
 import os
