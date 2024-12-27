@@ -1,3 +1,7 @@
+"""
+This script will remove videos from the download queue based on input file that has the corresponding video IDs
+"""
+
 import os
 import sys
 import requests
@@ -26,7 +30,6 @@ session.headers.update({"Authorization": f"Token {API_TOKEN}"})
 @click.argument("input_file", type=click.Path(exists=True))
 def remove_videos(input_file):
     """
-    Remove videos from the download queue based on input file.
     Each line in the input file should contain a YouTube video ID.
     """
     print(f"Reading video IDs from: {input_file}")
